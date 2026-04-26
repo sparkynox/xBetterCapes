@@ -4,36 +4,40 @@ import dev.sparkynox.xbettercapes.cape.CapeEntry;
 import dev.sparkynox.xbettercapes.cape.CapeRegistry;
 import dev.sparkynox.xbettercapes.cape.CapeTextureManager;
 import dev.sparkynox.xbettercapes.config.CapeConfig;
-import net.minecraft.client.network.AbstractClientPlayerEntity;
-import net.minecraft.client.render.entity.PlayerEntityRenderer;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.render.VertexConsumerProvider;
+import net.minecraft.client.render.entity.feature.CapeFeatureRenderer;
+import net.minecraft.client.render.entity.state.PlayerEntityRenderState;
+import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.util.Identifier;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * Overrides the cape texture returned for the LOCAL player only.
- * Remote players are unaffected — no server-side changes, no packets.
- *
- * We hook into getCapeTexture() which is called by the renderer each frame.
- * No tick loops, no scheduled tasks, no extra threads from this class.
+ * Hooks into CapeFeatureRenderer.render() to substitute our cape texture.
+ * Sets capeTexture on the render state before vanilla render runs.
+ * No tick loops, no extra threads from this class.
  */
-@Mixin(PlayerEntityRenderer.class)
+@Mixin(CapeFeatureRenderer.class)
 public class PlayerEntityRendererMixin {
 
     @Inject(
-        method = "getCapeTexture",
-        at = @At("HEAD"),
-        cancellable = true
+        method = "render(Lnet/minecraft/client/render/entity/state/PlayerEntityRenderState;Lnet/minecraft/client/util/math/MatrixStack;Lnet/minecraft/client/render/VertexConsumerProvider;I)V",
+        at = @At("HEAD")
     )
-    private void xbettercapes_overrideCape(
-            AbstractClientPlayerEntity player,
-            CallbackInfoReturnable<Identifier> cir) {
+    private void xbettercapes_injectCape(
+            PlayerEntityRenderState state,
+            MatrixStack matrices,
+            VertexConsumerProvider vertexConsumers,
+            int light,
+            CallbackInfo ci) {
 
-        // Only override for the local player
-        net.minecraft.client.MinecraftClient mc = net.minecraft.client.MinecraftClient.getInstance();
-        if (mc.player == null || !mc.player.equals(player)) return;
+        MinecraftClient mc = MinecraftClient.getInstance();
+        if (mc.player == null) return;
+        // Only affect local player — match by name from render state
+        if (!mc.player.getName().getString().equals(state.name)) return;
 
         String cfg = CapeConfig.selectedCape;
         if (cfg == null || cfg.equals("NONE") || cfg.equals("builtin:none")) return;
@@ -43,9 +47,8 @@ public class PlayerEntityRendererMixin {
 
         Identifier tex = CapeTextureManager.getTexture(entry);
         if (tex != null) {
-            cir.setReturnValue(tex);
+            state.capeTexture = tex;
         }
-        // If tex is null (still loading), fall through to vanilla (no cape shown yet)
     }
 
     private static CapeEntry resolveEntry(String cfg) {
