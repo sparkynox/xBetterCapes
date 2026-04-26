@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "xbettercapes",
+  "version": "${version}",
+  "name": "xBetter Capes",
+  "description": "Use custom capes on cracked/offline accounts with a sleek GUI. Built-in capes + URL support.",
+  "authors": ["SparkyNox", "SPA4RKIEE_XD"],
+  "contact": {
+    "homepage": "https://modrinth.com/user/sparkynox"
+  },
+  "license": "MIT",
+  "icon": "assets/xbettercapes/icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "client": ["dev.sparkynox.xbettercapes.XBetterCapesClient"]
+  },
+  "mixins": ["xbettercapes.mixins.json"],
+  "depends": {
+    "fabricloader": ">=0.16.9",
+    "fabric-api": "*",
+    "minecraft": ">=1.21.4"
+  }
+}
