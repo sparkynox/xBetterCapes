@@ -17,13 +17,15 @@ public class CapeRegistry {
         // ── No Cape (always first) ──────────────────────────────────────────
         register("none",  "No Cape",  null);
 
-        // ── Built-in capes (your 6 PNGs) ───────────────────────────────────
+        // ── Built-in capes (your all capes) ───────────────────────────────────
         register("cape1", "Cape 1",   "xbettercapes:textures/capes/1.png");
         register("cape2", "Cape 2",   "xbettercapes:textures/capes/2.png");
         register("cape3", "Cape 3",   "xbettercapes:textures/capes/3.png");
         register("cape4", "Cape 4",   "xbettercapes:textures/capes/4.png");
         register("cape5", "Cape 5",   "xbettercapes:textures/capes/5.png");
         register("cape6", "Cape 6",   "xbettercapes:textures/capes/6.png");
+        register("cape7", "Cape 7",   "xbettercapes:textures/capes/7.png");
+        register("cape8"' "Cape 8"'   "xbettercapes:textures/capes/8.png");
         // ── Add more above this line ↑ ──────────────────────────────────────
     }
 
