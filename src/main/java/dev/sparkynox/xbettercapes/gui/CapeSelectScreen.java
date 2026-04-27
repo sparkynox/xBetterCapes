@@ -51,21 +51,41 @@ public class CapeSelectScreen extends Screen {
             }
         }).dimensions(cx + 86, by - 24, 60, 18).build());
 
-        this.addDrawableChild(ButtonWidget.builder(Text.literal("✖ Close"), btn -> close())
+        this.addDrawableChild(ButtonWidget.builder(Text.literal("x Close"), btn -> close())
                 .dimensions(cx - 25, by, 50, 18).build());
     }
 
     @Override
     public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
-        ctx.fillGradient(0, 0, this.width, this.height, 0xD00A0A12, 0xD0101020);
-        ctx.drawCenteredTextWithShadow(textRenderer,
-                Text.literal("§b§lxBetter Capes  §8| §7SparkyNox & SPA4RKIEE_XD"),
-                this.width / 2, 8, 0xFFFFFF);
-        ctx.fill(this.width / 2 - 120, 18, this.width / 2 + 120, 19, 0xFF00E5FF);
+        // Sodium-compatible background — plain fill, no gradient, no blur
+        // Two layers: full dark base + slightly lighter panel area
+        ctx.fill(0, 0, this.width, this.height, 0xE0050508);
 
+        // Panel background behind the grid
         int gridW = COLS * (CARD_W + CARD_GAP) - CARD_GAP;
+        int panelX = (this.width - gridW) / 2 - 8;
+        int panelY = 2;
+        int panelW = gridW + 16;
+        int panelH = this.height - 8;
+        ctx.fill(panelX, panelY, panelX + panelW, panelY + panelH, 0xCC0D0D18);
+
+        // Panel border
+        drawRect(ctx, panelX, panelY, panelW, panelH, 0xFF1A2A3A);
+
+        // Title
+        ctx.drawCenteredTextWithShadow(textRenderer,
+                Text.literal("xBetter Capes"),
+                this.width / 2, 8, 0x00E5FF);
+        ctx.drawCenteredTextWithShadow(textRenderer,
+                Text.literal("by SparkyNox & SPA4RKIEE_XD"),
+                this.width / 2, 18, 0x557788);
+
+        // Divider line
+        ctx.fill(panelX + 4, 28, panelX + panelW - 4, 29, 0xFF1E4A5A);
+
+        // Cape grid
         int startX = (this.width - gridW) / 2;
-        int startY = 26;
+        int startY = 34;
 
         for (int i = 0; i < capes.size(); i++) {
             int col = i % COLS;
@@ -76,10 +96,18 @@ public class CapeSelectScreen extends Screen {
                     mouseX, mouseY);
         }
 
-        ctx.drawTextWithShadow(textRenderer, Text.literal("§7Image URL:"),
-                this.width / 2 - 120, this.height - 38, 0xAAAAAA);
+        ctx.drawTextWithShadow(textRenderer, Text.literal("Image URL:"),
+                this.width / 2 - 120, this.height - 38, 0x557788);
 
         super.render(ctx, mouseX, mouseY, delta);
+    }
+
+    /** Draw a plain border rectangle — Sodium safe, no blending tricks */
+    private void drawRect(DrawContext ctx, int x, int y, int w, int h, int color) {
+        ctx.fill(x,         y,         x + w,     y + 1,     color); // top
+        ctx.fill(x,         y + h - 1, x + w,     y + h,     color); // bottom
+        ctx.fill(x,         y,         x + 1,     y + h,     color); // left
+        ctx.fill(x + w - 1, y,         x + w,     y + h,     color); // right
     }
 
     private void drawCapeCard(DrawContext ctx, CapeEntry entry,
@@ -88,45 +116,52 @@ public class CapeSelectScreen extends Screen {
         boolean hovered  = mouseX >= x && mouseX < x + CARD_W
                         && mouseY >= y && mouseY < y + CARD_H;
 
-        ctx.fill(x, y, x + CARD_W, y + CARD_H,
-                selected ? 0xFF0D2A36 : (hovered ? 0xFF181828 : 0xFF0F0F1C));
-        ctx.drawBorder(x, y, CARD_W, CARD_H,
-                selected ? 0xFF00E5FF : (hovered ? 0xFF334455 : 0xFF1E1E30));
-        if (selected)
-            ctx.drawBorder(x - 1, y - 1, CARD_W + 2, CARD_H + 2, 0x5500E5FF);
+        // Card fill
+        int bg = selected ? 0xFF0A2535 : (hovered ? 0xFF151525 : 0xFF0C0C1A);
+        ctx.fill(x, y, x + CARD_W, y + CARD_H, bg);
 
+        // Card border — manual drawRect for Sodium compat
+        int borderColor = selected ? 0xFF00AACC : (hovered ? 0xFF2A4455 : 0xFF181828);
+        drawRect(ctx, x, y, CARD_W, CARD_H, borderColor);
+
+        // Selected: extra highlight line on top
+        if (selected) {
+            ctx.fill(x + 1, y + 1, x + CARD_W - 1, y + 2, 0xFF00E5FF);
+        }
+
+        // Cape preview
         int imgX = x + (CARD_W - PREVIEW_W) / 2;
         int imgY = y + 6;
 
         Identifier tex = CapeTextureManager.getTexture(entry);
         if (tex != null && entry.resourcePath != null) {
-            // Correct 1.21.4 signature:
-            // drawTexture(Function<Identifier,RenderLayer>, Identifier, x, y, u, v, w, h, texW, texH)
             ctx.drawTexture(RenderLayer::getGuiTextured, tex,
-                    imgX, imgY,
-                    0f, 0f,
-                    PREVIEW_W, PREVIEW_H,
-                    64, 32);
+                    imgX, imgY, 0f, 0f,
+                    PREVIEW_W, PREVIEW_H, 64, 32);
         } else if (entry.resourcePath != null) {
-            ctx.fill(imgX, imgY, imgX + PREVIEW_W, imgY + PREVIEW_H, 0xFF1A1A2A);
-            ctx.drawCenteredTextWithShadow(textRenderer, Text.literal("§8..."),
-                    imgX + PREVIEW_W / 2, imgY + 6, 0x555566);
+            // Loading
+            ctx.fill(imgX, imgY, imgX + PREVIEW_W, imgY + PREVIEW_H, 0xFF111120);
+            ctx.drawCenteredTextWithShadow(textRenderer, Text.literal("..."),
+                    imgX + PREVIEW_W / 2, imgY + 6, 0x334455);
         } else {
-            ctx.fill(imgX, imgY, imgX + PREVIEW_W, imgY + PREVIEW_H, 0xFF111118);
-            ctx.drawCenteredTextWithShadow(textRenderer, Text.literal("§c✖"),
-                    imgX + PREVIEW_W / 2, imgY + 6, 0xFF4444);
+            // No cape slot
+            ctx.fill(imgX, imgY, imgX + PREVIEW_W, imgY + PREVIEW_H, 0xFF0A0A14);
+            ctx.drawCenteredTextWithShadow(textRenderer, Text.literal("NONE"),
+                    imgX + PREVIEW_W / 2, imgY + 6, 0x334444);
         }
 
+        // Name
         String name = entry.displayName;
         if (textRenderer.getWidth(name) > CARD_W - 4)
             name = textRenderer.trimToWidth(name, CARD_W - 8) + "..";
         ctx.drawCenteredTextWithShadow(textRenderer, Text.literal(name),
                 x + CARD_W / 2, y + CARD_H - 11,
-                selected ? 0x00E5FF : (hovered ? 0xEEEEEE : 0xAAAAAA));
+                selected ? 0x00E5FF : (hovered ? 0xCCDDEE : 0x778899));
 
+        // Checkmark
         if (selected)
-            ctx.drawCenteredTextWithShadow(textRenderer, Text.literal("§a✔"),
-                    x + CARD_W - 8, y + 4, 0x00FF88);
+            ctx.drawCenteredTextWithShadow(textRenderer, Text.literal("v"),
+                    x + CARD_W - 6, y + 4, 0x00FF88);
     }
 
     @Override
@@ -134,7 +169,7 @@ public class CapeSelectScreen extends Screen {
         if (button == 0) {
             int gridW = COLS * (CARD_W + CARD_GAP) - CARD_GAP;
             int startX = (this.width - gridW) / 2;
-            int startY = 26;
+            int startY = 34;
             for (int i = 0; i < capes.size(); i++) {
                 int cx = startX + (i % COLS) * (CARD_W + CARD_GAP);
                 int cy = startY + (i / COLS) * (CARD_H + CARD_GAP);
