@@ -5,124 +5,141 @@ import net.minecraft.client.texture.NativeImage;
 import net.minecraft.client.texture.NativeImageBackedTexture;
 import net.minecraft.util.Identifier;
 
-import javax.imageio.ImageIO;
-import java.awt.image.BufferedImage;
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.time.Duration;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * Manages cape texture loading.
- * - Built-in capes: loaded from mod resources (zero network).
- * - URL capes: fetched async on a single background thread, registered on main thread.
- * - All textures are cached; never loaded twice.
- * - Call releaseAll() when the GUI closes to free VRAM.
- */
 public class CapeTextureManager {
 
-    // Single daemon thread — no extra RAM, no frame stutter
     private static final ExecutorService LOADER =
             Executors.newSingleThreadExecutor(r -> {
-                Thread t = new Thread(r, "xBetterCapes-TextureLoader");
+                Thread t = new Thread(r, "xBetterCapes-Loader");
                 t.setDaemon(true);
                 return t;
             });
 
-    private static final HttpClient HTTP = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(8))
-            .build();
+    private static final Map<String, Identifier> CACHE   = new ConcurrentHashMap<>();
+    private static final Map<String, Boolean>    PENDING = new ConcurrentHashMap<>();
+    private static final AtomicInteger           COUNTER = new AtomicInteger(0);
 
-    // id → Identifier (Minecraft texture)
-    private static final Map<String, Identifier> CACHE = new ConcurrentHashMap<>();
-    // ids currently being fetched — prevents duplicate requests
-    private static final Map<String, Boolean> PENDING = new ConcurrentHashMap<>();
-
-    private static int urlTextureCounter = 0;
-
-    /**
-     * Returns the Identifier for a CapeEntry, or null if not yet ready.
-     * Kicks off async loading if needed.
-     */
     public static Identifier getTexture(CapeEntry entry) {
         if (entry == null || entry.resourcePath == null) return null;
+        String key = entry.toConfigString();
 
-        String cacheKey = entry.toConfigString();
-
-        Identifier cached = CACHE.get(cacheKey);
+        Identifier cached = CACHE.get(key);
         if (cached != null) return cached;
-
-        if (PENDING.containsKey(cacheKey)) return null; // already loading
+        if (PENDING.containsKey(key)) return null;
 
         if (entry.type == CapeEntry.Type.BUILTIN) {
-            // Parse "namespace:path" into Identifier
             String path = entry.resourcePath;
             int colon = path.indexOf(':');
             Identifier id = (colon >= 0)
                     ? Identifier.of(path.substring(0, colon), path.substring(colon + 1))
                     : Identifier.of(path);
-            CACHE.put(cacheKey, id);
+            CACHE.put(key, id);
             return id;
         }
 
-        // URL cape — fetch async
-        PENDING.put(cacheKey, true);
-        LOADER.submit(() -> loadUrlTexture(cacheKey, entry.resourcePath));
+        // URL type — load async
+        PENDING.put(key, true);
+        LOADER.submit(() -> fetchUrl(key, entry.resourcePath));
         return null;
     }
 
-    private static void loadUrlTexture(String cacheKey, String url) {
+    /** Call this from Load URL button to kick off fetch immediately */
+    public static void prefetch(CapeEntry entry) {
+        if (entry == null || entry.type != CapeEntry.Type.URL) return;
+        getTexture(entry); // triggers async load if not already cached
+    }
+
+    private static void fetchUrl(String key, String urlStr) {
         try {
-            HttpRequest req = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
-                    .timeout(Duration.ofSeconds(10))
-                    .header("User-Agent", "xBetterCapes/1.0")
-                    .GET()
-                    .build();
-
-            HttpResponse<byte[]> res = HTTP.send(req, HttpResponse.BodyHandlers.ofByteArray());
-            if (res.statusCode() != 200) throw new RuntimeException("HTTP " + res.statusCode());
-
-            byte[] bytes = res.body();
-
-            // Convert to NativeImage on main thread to avoid GL context issues
+            byte[] bytes = downloadWithRedirects(urlStr, 5);
+            if (bytes == null || bytes.length == 0) {
+                PENDING.remove(key);
+                return;
+            }
             MinecraftClient.getInstance().execute(() -> {
-                try (InputStream is = new ByteArrayInputStream(bytes)) {
-                    NativeImage img = NativeImage.read(is);
+                try {
+                    NativeImage img = NativeImage.read(
+                            new java.io.ByteArrayInputStream(bytes));
                     NativeImageBackedTexture tex = new NativeImageBackedTexture(img);
-                    String texName = "xbettercapes:url_cape_" + (urlTextureCounter++);
-                    Identifier id = Identifier.of("xbettercapes", "url_cape_" + urlTextureCounter);
-                    MinecraftClient.getInstance().getTextureManager().registerTexture(id, tex);
-                    CACHE.put(cacheKey, id);
+                    Identifier id = Identifier.of("xbettercapes",
+                            "url_cape_" + COUNTER.incrementAndGet());
+                    MinecraftClient.getInstance()
+                            .getTextureManager().registerTexture(id, tex);
+                    CACHE.put(key, id);
                 } catch (Exception e) {
                     e.printStackTrace();
                 } finally {
-                    PENDING.remove(cacheKey);
+                    PENDING.remove(key);
                 }
             });
-
         } catch (Exception e) {
             e.printStackTrace();
-            PENDING.remove(cacheKey);
+            PENDING.remove(key);
         }
     }
 
-    /** Call this to free dynamically registered textures (URL capes) from VRAM. */
+    /**
+     * Simple HTTP download that follows redirects manually.
+     * Java's HttpURLConnection follows same-protocol redirects automatically,
+     * but NOT http→https redirects. We handle up to maxRedirects hops.
+     */
+    private static byte[] downloadWithRedirects(String urlStr, int maxRedirects)
+            throws Exception {
+        String currentUrl = urlStr;
+        for (int i = 0; i <= maxRedirects; i++) {
+            HttpURLConnection conn = (HttpURLConnection) new URL(currentUrl).openConnection();
+            conn.setInstanceFollowRedirects(false); // handle manually
+            conn.setRequestProperty("User-Agent", "xBetterCapes/1.0");
+            conn.setConnectTimeout(8000);
+            conn.setReadTimeout(10000);
+            conn.connect();
+
+            int code = conn.getResponseCode();
+            if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
+                String loc = conn.getHeaderField("Location");
+                conn.disconnect();
+                if (loc == null) break;
+                // Handle relative redirects
+                if (loc.startsWith("/")) {
+                    URL base = new URL(currentUrl);
+                    loc = base.getProtocol() + "://" + base.getHost() + loc;
+                }
+                currentUrl = loc;
+                continue;
+            }
+
+            if (code == 200) {
+                try (InputStream is = conn.getInputStream()) {
+                    java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
+                    byte[] tmp = new byte[8192];
+                    int n;
+                    while ((n = is.read(tmp)) != -1) buf.write(tmp, 0, n);
+                    conn.disconnect();
+                    return buf.toByteArray();
+                }
+            }
+            conn.disconnect();
+            break;
+        }
+        return null;
+    }
+
     public static void releaseUrlTextures() {
         MinecraftClient client = MinecraftClient.getInstance();
-        CACHE.forEach((key, id) -> {
-            if (key.startsWith("url:")) {
-                client.getTextureManager().destroyTexture(id);
+        CACHE.entrySet().removeIf(e -> {
+            if (e.getKey().startsWith("url:")) {
+                client.getTextureManager().destroyTexture(e.getValue());
+                return true;
             }
+            return false;
         });
-        CACHE.entrySet().removeIf(e -> e.getKey().startsWith("url:"));
     }
 }
