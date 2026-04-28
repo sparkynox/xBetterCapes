@@ -1,6 +1,7 @@
 package dev.sparkynox.xbettercapes;
 
 import dev.sparkynox.xbettercapes.config.CapeConfig;
+import dev.sparkynox.xbettercapes.skin.SkinConfig;
 import dev.sparkynox.xbettercapes.gui.CapeSelectScreen;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -15,8 +16,9 @@ public class XBetterCapesClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        // Load saved config
+        // Load saved configs
         CapeConfig.load();
+        SkinConfig.load();
 
         // Register G keybind
         openGuiKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
