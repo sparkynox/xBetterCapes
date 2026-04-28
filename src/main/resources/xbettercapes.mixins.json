@@ -5,6 +5,9 @@
   "client": [
     "PlayerEntityRendererMixin"
   ],
+  "mixins": [
+    "dev.sparkynox.xbettercapes.skin.SkinMixin"
+  ],
   "injectors": {
     "defaultRequire": 1
   }
