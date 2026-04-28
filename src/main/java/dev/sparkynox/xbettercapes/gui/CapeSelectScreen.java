@@ -50,9 +50,19 @@ public class CapeSelectScreen extends Screen {
         capes = CapeRegistry.getBuiltinCapes();
         recalcLayout();
         int cx = this.width / 2;
+        // Two buttons side by side at bottom
         this.addDrawableChild(ButtonWidget.builder(
-                Text.literal("Load Custom Cape"), btn -> openFilePicker())
-                .dimensions(cx - 65, bottomBarY + 6, 130, 18).build());
+                Text.literal("Load Custom"), btn -> openFilePicker())
+                .dimensions(cx - 100, bottomBarY + 6, 90, 18).build());
+
+        this.addDrawableChild(ButtonWidget.builder(
+                Text.literal("Skin >"), btn ->
+                        this.client.setScreen(new SkinScreen(this)))
+                .dimensions(cx - 4, bottomBarY + 6, 50, 18).build());
+
+        this.addDrawableChild(ButtonWidget.builder(
+                Text.literal("Close"), btn -> close())
+                .dimensions(cx + 54, bottomBarY + 6, 46, 18).build());
     }
 
     private void recalcLayout() {
