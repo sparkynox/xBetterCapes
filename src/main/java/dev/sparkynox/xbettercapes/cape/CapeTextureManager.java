@@ -167,6 +167,11 @@ public class CapeTextureManager {
         return null;
     }
 
+    /** Directly insert a pre-loaded texture into cache (used for local file capes) */
+    public static void putCache(String key, Identifier id) {
+        CACHE.put(key, id);
+    }
+
     public static void releaseUrlTextures() {
         MinecraftClient client = MinecraftClient.getInstance();
         CACHE.entrySet().removeIf(e -> {
