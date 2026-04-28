@@ -4,32 +4,34 @@ import dev.sparkynox.xbettercapes.cape.CapeEntry;
 import dev.sparkynox.xbettercapes.cape.CapeRegistry;
 import dev.sparkynox.xbettercapes.cape.CapeTextureManager;
 import dev.sparkynox.xbettercapes.config.CapeConfig;
+import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.client.render.RenderLayer;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
 
+import java.io.File;
+import java.nio.file.Files;
 import java.util.List;
 
 public class CapeSelectScreen extends Screen {
 
     private static final int CARD_W    = 54;
-    private static final int CARD_H    = 62;
+    private static final int CARD_H    = 64;
     private static final int CARD_GAP  = 6;
     private static final int COLS      = 4;
     private static final int SCROLLBAR_W = 6;
 
-    // Cape in 64x32 tex: pixels 0-21 wide, 0-16 tall (22x17 region)
-    // We render that region scaled to PREVIEW size
-    private static final int CAPE_U = 0, CAPE_V = 0;
-    private static final int CAPE_REGION_W = 22, CAPE_REGION_H = 17;
-    private static final int PREVIEW_W = 44, PREVIEW_H = 34; // 2x scale
-    private static final int TEX_W = 64,  TEX_H = 32;
+    // Exact 1.21.4 drawTexture signature (confirmed from Yarn docs):
+    // drawTexture(renderLayers, sprite, x, y, u, v, drawW, drawH, regionW, regionH, texW, texH)
+    // Cape region in 64x32 sheet: top-left at 0,0 size 22x17
+    private static final float  CAPE_U  = 0f,  CAPE_V  = 0f;
+    private static final int    CAPE_RW = 22,  CAPE_RH = 17;  // region in texture
+    private static final int    PREV_W  = 44,  PREV_H  = 34;  // drawn size (2x)
+    private static final int    TEX_W   = 64,  TEX_H   = 32;
 
-    private TextFieldWidget urlField;
     private List<CapeEntry> capes;
     private String statusMsg = "";
 
@@ -39,7 +41,7 @@ public class CapeSelectScreen extends Screen {
 
     private int gridX, gridY, gridW, gridH;
     private int totalContentH;
-    private int scrollbarX, scrollbarY, scrollbarH;
+    private int scrollbarX, scrollbarH;
     private int bottomBarY;
 
     public CapeSelectScreen() {
@@ -49,47 +51,107 @@ public class CapeSelectScreen extends Screen {
     @Override
     protected void init() {
         capes = CapeRegistry.getBuiltinCapes();
+
         int rows      = (int) Math.ceil(capes.size() / (double) COLS);
         int contentGW = COLS * (CARD_W + CARD_GAP) - CARD_GAP;
 
-        bottomBarY    = this.height - 46;
+        bottomBarY    = this.height - 32;
         gridX         = (this.width - contentGW) / 2;
         gridY         = 32;
         gridW         = contentGW;
         gridH         = bottomBarY - gridY - 4;
         totalContentH = rows * (CARD_H + CARD_GAP) - CARD_GAP;
         scrollbarX    = gridX + gridW + 6;
-        scrollbarY    = gridY;
         scrollbarH    = gridH;
         scrollOffset  = 0;
 
         int cx = this.width / 2;
 
-        urlField = new TextFieldWidget(this.textRenderer,
-                cx - 125, bottomBarY + 4, 210, 18, Text.literal("Cape URL"));
-        urlField.setPlaceholder(Text.literal("Paste image URL here..."));
-        urlField.setMaxLength(512);
-        this.addDrawableChild(urlField);
-
-        this.addDrawableChild(ButtonWidget.builder(Text.literal("Load"), btn -> {
-            String url = urlField.getText().trim();
-            if (url.startsWith("http://") || url.startsWith("https://")) {
-                statusMsg = "Loading...";
-                CapeEntry entry = CapeRegistry.fromUrl(url);
-                CapeConfig.selectedCape = entry.toConfigString();
-                CapeConfig.save();
-                CapeTextureManager.prefetch(entry);
-                statusMsg = "Set! Rejoin world to see.";
-            } else {
-                statusMsg = "Invalid URL!";
-            }
-        }).dimensions(cx + 90, bottomBarY + 4, 40, 18).build());
-
-        this.addDrawableChild(ButtonWidget.builder(Text.literal("Close"), btn -> close())
-                .dimensions(cx - 20, bottomBarY + 26, 40, 14).build());
+        // "Load Custom Cape" button — opens file picker
+        this.addDrawableChild(ButtonWidget.builder(
+                Text.literal("Load Custom Cape"), btn -> openFilePicker())
+                .dimensions(cx - 70, bottomBarY + 6, 140, 18).build());
     }
 
-    private int maxScroll() { return Math.max(0, totalContentH - gridH); }
+    // ── File picker ───────────────────────────────────────────────────────────
+    private void openFilePicker() {
+        // Use AWT FileDialog — works on desktop Java including Pojav
+        new Thread(() -> {
+            try {
+                java.awt.FileDialog fd = new java.awt.FileDialog(
+                        (java.awt.Frame) null, "Select Cape PNG", java.awt.FileDialog.LOAD);
+                fd.setFilenameFilter((dir, name) ->
+                        name.toLowerCase().endsWith(".png") ||
+                        name.toLowerCase().endsWith(".jpg") ||
+                        name.toLowerCase().endsWith(".jpeg"));
+                fd.setVisible(true);
+
+                String dir  = fd.getDirectory();
+                String file = fd.getFile();
+                fd.dispose();
+
+                if (dir != null && file != null) {
+                    File chosen = new File(dir, file);
+                    if (chosen.exists()) {
+                        loadLocalFile(chosen);
+                    }
+                }
+            } catch (Exception e) {
+                // AWT unavailable (rare) — show message
+                MinecraftClient.getInstance().execute(() ->
+                        statusMsg = "File picker unavailable on this device.");
+            }
+        }, "xBetterCapes-FilePicker").start();
+    }
+
+    private void loadLocalFile(File file) {
+        new Thread(() -> {
+            try {
+                byte[] bytes = Files.readAllBytes(file.toPath());
+                // Validate PNG magic bytes
+                if (bytes.length < 4 ||
+                    (bytes[0] & 0xFF) != 0x89 ||
+                    (bytes[1] & 0xFF) != 0x50) {
+                    MinecraftClient.getInstance().execute(() ->
+                            statusMsg = "Not a valid PNG file!");
+                    return;
+                }
+                MinecraftClient.getInstance().execute(() -> {
+                    try {
+                        net.minecraft.client.texture.NativeImage img =
+                                net.minecraft.client.texture.NativeImage.read(
+                                        new java.io.ByteArrayInputStream(bytes));
+                        net.minecraft.client.texture.NativeImageBackedTexture tex =
+                                new net.minecraft.client.texture.NativeImageBackedTexture(img);
+                        Identifier id = Identifier.of("xbettercapes", "custom_local_cape");
+                        MinecraftClient.getInstance()
+                                .getTextureManager().registerTexture(id, tex);
+
+                        // Update custom slot in registry and select it
+                        CapeRegistry.setCustomLocal(id, file.getName());
+                        CapeTextureManager.putCache("builtin:custom_local", id);
+                        CapeConfig.selectedCape = "builtin:custom_local";
+                        CapeConfig.save();
+                        statusMsg = "Loaded: " + file.getName();
+
+                        // Refresh capes list
+                        capes = CapeRegistry.getBuiltinCapes();
+                        // Recompute layout
+                        int rows = (int) Math.ceil(capes.size() / (double) COLS);
+                        totalContentH = rows * (CARD_H + CARD_GAP) - CARD_GAP;
+                    } catch (Exception e) {
+                        statusMsg = "Failed to load image!";
+                    }
+                });
+            } catch (Exception e) {
+                MinecraftClient.getInstance().execute(() ->
+                        statusMsg = "Could not read file!");
+            }
+        }, "xBetterCapes-FileLoader").start();
+    }
+
+    // ── Scroll helpers ────────────────────────────────────────────────────────
+    private int maxScroll()  { return Math.max(0, totalContentH - gridH); }
     private void clampScroll() { scrollOffset = Math.max(0, Math.min(scrollOffset, maxScroll())); }
     private int thumbH() {
         if (totalContentH <= gridH) return scrollbarH;
@@ -97,10 +159,11 @@ public class CapeSelectScreen extends Screen {
     }
     private int thumbY() {
         int max = maxScroll();
-        if (max == 0) return scrollbarY;
-        return scrollbarY + (scrollbarH - thumbH()) * scrollOffset / max;
+        if (max == 0) return gridY;
+        return gridY + (scrollbarH - thumbH()) * scrollOffset / max;
     }
 
+    // ── Rendering ─────────────────────────────────────────────────────────────
     @Override
     public void renderBackground(DrawContext ctx, int mouseX, int mouseY, float delta) {
         ctx.fill(0, 0, this.width, this.height, 0xFF060609);
@@ -121,7 +184,7 @@ public class CapeSelectScreen extends Screen {
                 Text.literal("SparkyNox & SPA4RKIEE_XD"), this.width / 2, 17, 0x446677);
         ctx.fill(px + 4, 27, px + pw - 4, 28, 0xFF183040);
 
-        // Scissor clip grid
+        // Clipped grid
         ctx.enableScissor(gridX, gridY, gridX + gridW, gridY + gridH);
         for (int i = 0; i < capes.size(); i++) {
             int col = i % COLS;
@@ -133,14 +196,14 @@ public class CapeSelectScreen extends Screen {
         }
         ctx.disableScissor();
 
-        // Top/bottom fade
+        // Edge fades
         ctx.fill(gridX, gridY, gridX + gridW, gridY + 8, 0xBB060609);
         ctx.fill(gridX, gridY + gridH - 8, gridX + gridW, gridY + gridH, 0xBB060609);
 
         // Scrollbar
         if (maxScroll() > 0) {
-            ctx.fill(scrollbarX, scrollbarY,
-                     scrollbarX + SCROLLBAR_W, scrollbarY + scrollbarH, 0xFF0E0E18);
+            ctx.fill(scrollbarX, gridY,
+                     scrollbarX + SCROLLBAR_W, gridY + scrollbarH, 0xFF0E0E18);
             boolean hov = mouseX >= scrollbarX && mouseX <= scrollbarX + SCROLLBAR_W
                        && mouseY >= thumbY() && mouseY <= thumbY() + thumbH();
             ctx.fill(scrollbarX, thumbY(),
@@ -148,12 +211,13 @@ public class CapeSelectScreen extends Screen {
                      (draggingScroll || hov) ? 0xFF00AACC : 0xFF2A4A5A);
         }
 
-        // Bottom bar
+        // Divider above bottom bar
         ctx.fill(px + 2, bottomBarY - 2, px + pw - 2, bottomBarY - 1, 0xFF183040);
-        ctx.drawTextWithShadow(textRenderer, Text.literal("URL:"),
-                this.width / 2 - 125, bottomBarY - 10, 0x446677);
+
+        // Status message
         if (!statusMsg.isEmpty()) {
-            int col = statusMsg.startsWith("Invalid") ? 0xFF4444 : 0x00CC88;
+            int col = statusMsg.startsWith("Not") || statusMsg.startsWith("Failed")
+                    || statusMsg.startsWith("Could") ? 0xFF4444 : 0x00CC88;
             ctx.drawCenteredTextWithShadow(textRenderer,
                     Text.literal(statusMsg), this.width / 2, bottomBarY - 10, col);
         }
@@ -182,29 +246,35 @@ public class CapeSelectScreen extends Screen {
         if (selected)
             ctx.fill(x + 1, y + 1, x + CARD_W - 1, y + 2, 0xFF00BBDD);
 
-        // Center preview in card
-        int imgX = x + (CARD_W - PREVIEW_W) / 2;
-        int imgY = y + 4;
+        int imgX = x + (CARD_W - PREV_W) / 2;
+        int imgY = y + 5;
 
         Identifier tex = CapeTextureManager.getTexture(entry);
+
         if (tex != null && entry.resourcePath != null) {
-            // Draw ONLY the cape region (22x17) from the 64x32 texture,
-            // scaled up to PREVIEW_W x PREVIEW_H
-            ctx.drawTexture(RenderLayer::getGuiTextured, tex,
+            // CONFIRMED 1.21.4 signature from Yarn docs:
+            // drawTexture(renderLayers, sprite, x, y, u, v, drawW, drawH, regionW, regionH, texW, texH)
+            ctx.drawTexture(RenderLayer::getGuiTextured,
+                    tex,
                     imgX, imgY,
-                    (float) CAPE_U, (float) CAPE_V,
-                    PREVIEW_W, PREVIEW_H,
-                    CAPE_REGION_W, CAPE_REGION_H,  // source region size
-                    TEX_W, TEX_H);                  // full texture size
+                    CAPE_U, CAPE_V,
+                    PREV_W, PREV_H,
+                    CAPE_RW, CAPE_RH,
+                    TEX_W, TEX_H);
+        } else if ("custom_local".equals(entry.id)) {
+            // Custom slot — not yet loaded
+            ctx.fill(imgX, imgY, imgX + PREV_W, imgY + PREV_H, 0xFF101020);
+            ctx.drawCenteredTextWithShadow(textRenderer, Text.literal("+"),
+                    imgX + PREV_W / 2, imgY + PREV_H / 2 - 4, 0x446677);
         } else if (entry.resourcePath != null) {
-            ctx.fill(imgX, imgY, imgX + PREVIEW_W, imgY + PREVIEW_H, 0xFF0E0E1C);
+            ctx.fill(imgX, imgY, imgX + PREV_W, imgY + PREV_H, 0xFF0E0E1C);
             ctx.drawCenteredTextWithShadow(textRenderer, Text.literal("..."),
-                    imgX + PREVIEW_W / 2, imgY + PREVIEW_H / 2 - 4, 0x223344);
+                    imgX + PREV_W / 2, imgY + PREV_H / 2 - 4, 0x223344);
         } else {
             // No Cape slot
-            ctx.fill(imgX, imgY, imgX + PREVIEW_W, imgY + PREVIEW_H, 0xFF080810);
+            ctx.fill(imgX, imgY, imgX + PREV_W, imgY + PREV_H, 0xFF080810);
             ctx.drawCenteredTextWithShadow(textRenderer, Text.literal("NONE"),
-                    imgX + PREVIEW_W / 2, imgY + PREVIEW_H / 2 - 4, 0x223333);
+                    imgX + PREV_W / 2, imgY + PREV_H / 2 - 4, 0x223333);
         }
 
         String name = entry.displayName;
@@ -219,6 +289,7 @@ public class CapeSelectScreen extends Screen {
                     x + CARD_W - 6, y + 4, 0x00EE88);
     }
 
+    // ── Input ─────────────────────────────────────────────────────────────────
     @Override
     public boolean mouseScrolled(double mx, double my, double hA, double vA) {
         scrollOffset -= (int)(vA * (CARD_H + CARD_GAP));
@@ -229,6 +300,7 @@ public class CapeSelectScreen extends Screen {
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
         if (button == 0) {
+            // Scrollbar thumb
             if (maxScroll() > 0
                     && mouseX >= scrollbarX && mouseX <= scrollbarX + SCROLLBAR_W
                     && mouseY >= thumbY() && mouseY <= thumbY() + thumbH()) {
@@ -237,15 +309,22 @@ public class CapeSelectScreen extends Screen {
                 dragStartOffset = scrollOffset;
                 return true;
             }
+            // Cape card
             if (mouseY >= gridY && mouseY < gridY + gridH) {
                 for (int i = 0; i < capes.size(); i++) {
                     int cx = gridX + (i % COLS) * (CARD_W + CARD_GAP);
                     int cy = gridY + (i / COLS) * (CARD_H + CARD_GAP) - scrollOffset;
                     if (mouseX >= cx && mouseX < cx + CARD_W
                      && mouseY >= cy && mouseY < cy + CARD_H) {
-                        CapeConfig.selectedCape = capes.get(i).toConfigString();
-                        CapeConfig.save();
-                        statusMsg = "";
+                        CapeEntry entry = capes.get(i);
+                        if ("custom_local".equals(entry.id)) {
+                            // Clicking Custom slot opens file picker
+                            openFilePicker();
+                        } else {
+                            CapeConfig.selectedCape = entry.toConfigString();
+                            CapeConfig.save();
+                            statusMsg = "";
+                        }
                         return true;
                     }
                 }
