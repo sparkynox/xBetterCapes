@@ -3,10 +3,8 @@
   "package": "dev.sparkynox.xbettercapes.mixin",
   "compatibilityLevel": "JAVA_21",
   "client": [
-    "PlayerEntityRendererMixin"
-  ],
-  "mixins": [
-    "dev.sparkynox.xbettercapes.skin.SkinMixin"
+    "PlayerEntityRendererMixin",
+    "SkinMixin"
   ],
   "injectors": {
     "defaultRequire": 1
