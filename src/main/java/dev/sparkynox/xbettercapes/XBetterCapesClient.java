@@ -1,12 +1,14 @@
 package dev.sparkynox.xbettercapes;
 
-import dev.sparkynox.xbettercapes.config.CapeConfig;
-import dev.sparkynox.xbettercapes.skin.SkinConfig;
 import dev.sparkynox.xbettercapes.command.XSkinCommand;
+import dev.sparkynox.xbettercapes.config.CapeConfig;
 import dev.sparkynox.xbettercapes.gui.CapeSelectScreen;
+import dev.sparkynox.xbettercapes.skin.SkinConfig;
+import dev.sparkynox.xbettercapes.skin.SkinFetcher;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
 import org.lwjgl.glfw.GLFW;
@@ -32,11 +34,16 @@ public class XBetterCapesClient implements ClientModInitializer {
                 "category.xbettercapes"
         ));
 
-        // Single tick listener — only opens screen, no heavy work
+        // Open GUI on G press
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             if (openGuiKey.wasPressed()) {
                 client.setScreen(new CapeSelectScreen());
             }
+        });
+
+        // Pre-warm skin on every world join — re-fetches if cache was lost
+        ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
+            SkinFetcher.preWarm();
         });
     }
 }
