@@ -17,14 +17,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * Fetches skin textures:
- *  - By player name  → Mojang API: /users/profiles/minecraft/<name> → UUID → session profile → skin URL
- *  - By direct URL   → direct download
- *
- * All fetching is async on a single daemon thread.
- * Results cached in memory.
- */
 public class SkinFetcher {
 
     private static final ExecutorService LOADER =
@@ -34,75 +26,77 @@ public class SkinFetcher {
                 return t;
             });
 
+    // Persistent cache — NEVER cleared on screen close or rejoin
+    // Only cleared on explicit /xskin reset or new skin apply
     private static final Map<String, Identifier> CACHE   = new ConcurrentHashMap<>();
     private static final Map<String, Boolean>    PENDING = new ConcurrentHashMap<>();
     private static final AtomicInteger           COUNTER = new AtomicInteger(0);
 
-    // Status message for GUI feedback
     public static volatile String statusMsg = "";
 
     /**
-     * Returns cached skin Identifier, or null if still loading.
-     * Kicks off async load if needed.
+     * Returns cached skin Identifier immediately, or null if still loading.
+     * Auto-kicks off async fetch if config has a skin set but cache is empty
+     * (happens on game start / rejoin — config persists but texture cache doesn't).
      */
     public static Identifier getSkin(String cfg) {
         if (cfg == null || cfg.equals("NONE")) return null;
 
         Identifier cached = CACHE.get(cfg);
         if (cached != null) return cached;
+
+        // Don't re-fetch if already pending
         if (PENDING.containsKey(cfg)) return null;
 
+        // Auto re-fetch (covers rejoin case)
         PENDING.put(cfg, true);
         statusMsg = "Loading skin...";
 
         if (cfg.startsWith("player:")) {
-            String name = cfg.substring("player:".length()).trim();
-            LOADER.submit(() -> fetchByName(cfg, name));
+            LOADER.submit(() -> fetchByName(cfg, cfg.substring("player:".length()).trim()));
         } else if (cfg.startsWith("url:")) {
-            String url = cfg.substring("url:".length());
-            LOADER.submit(() -> fetchByUrl(cfg, url));
+            LOADER.submit(() -> fetchByUrl(cfg, cfg.substring("url:".length())));
         }
         return null;
     }
 
-    /** Fetch skin by Minecraft player name via Mojang API */
+    /** Called on game init — pre-warms skin from saved config */
+    public static void preWarm() {
+        String cfg = SkinConfig.selectedSkin;
+        if (cfg != null && !cfg.equals("NONE") && !CACHE.containsKey(cfg)) {
+            getSkin(cfg);
+        }
+    }
+
     private static void fetchByName(String cacheKey, String playerName) {
         try {
-            // Step 1: Name → UUID
             String profileJson = httpGet(
                     "https://api.mojang.com/users/profiles/minecraft/" + playerName);
-            if (profileJson == null) {
-                fail(cacheKey, "Player not found: " + playerName); return;
-            }
+            if (profileJson == null) { fail(cacheKey, "Player not found: " + playerName); return; }
+
             JsonObject profile = JsonParser.parseString(profileJson).getAsJsonObject();
             String uuid = profile.get("id").getAsString();
 
-            // Step 2: UUID → Session profile (contains skin URL)
             String sessionJson = httpGet(
                     "https://sessionserver.mojang.com/session/minecraft/profile/" + uuid);
-            if (sessionJson == null) {
-                fail(cacheKey, "Could not fetch profile for: " + playerName); return;
-            }
+            if (sessionJson == null) { fail(cacheKey, "Could not fetch profile"); return; }
 
-            // Step 3: Decode textures property (base64 JSON)
             JsonObject session = JsonParser.parseString(sessionJson).getAsJsonObject();
-            var props = session.getAsJsonArray("properties");
             String skinUrl = null;
-            for (var prop : props) {
+
+            for (var prop : session.getAsJsonArray("properties")) {
                 JsonObject p = prop.getAsJsonObject();
                 if ("textures".equals(p.get("name").getAsString())) {
                     String decoded = new String(Base64.getDecoder()
                             .decode(p.get("value").getAsString()));
                     JsonObject textures = JsonParser.parseString(decoded)
-                            .getAsJsonObject()
-                            .getAsJsonObject("textures");
-                    if (textures.has("SKIN")) {
-                        skinUrl = textures.getAsJsonObject("SKIN")
-                                .get("url").getAsString();
+                            .getAsJsonObject().getAsJsonObject("textures");
+                    if (textures != null && textures.has("SKIN")) {
+                        skinUrl = textures.getAsJsonObject("SKIN").get("url").getAsString();
                         // Detect slim model
-                        if (textures.getAsJsonObject("SKIN").has("metadata")) {
-                            String model = textures.getAsJsonObject("SKIN")
-                                    .getAsJsonObject("metadata")
+                        JsonObject skinObj = textures.getAsJsonObject("SKIN");
+                        if (skinObj.has("metadata")) {
+                            String model = skinObj.getAsJsonObject("metadata")
                                     .get("model").getAsString();
                             if ("slim".equals(model)) {
                                 SkinConfig.skinModel = "slim";
@@ -113,9 +107,8 @@ public class SkinFetcher {
                     break;
                 }
             }
-            if (skinUrl == null) { fail(cacheKey, "No skin found for: " + playerName); return; }
 
-            // Step 4: Download skin PNG
+            if (skinUrl == null) { fail(cacheKey, "No skin for: " + playerName); return; }
             byte[] bytes = downloadBytes(skinUrl);
             registerTexture(cacheKey, bytes, playerName);
 
@@ -124,11 +117,10 @@ public class SkinFetcher {
         }
     }
 
-    /** Fetch skin by direct URL */
     private static void fetchByUrl(String cacheKey, String url) {
         try {
             byte[] bytes = downloadBytes(url);
-            registerTexture(cacheKey, bytes, "custom");
+            registerTexture(cacheKey, bytes, "url");
         } catch (Exception e) {
             fail(cacheKey, "Download failed: " + e.getMessage());
         }
@@ -141,16 +133,18 @@ public class SkinFetcher {
         if ((bytes[0]&0xFF) != 0x89 || (bytes[1]&0xFF) != 0x50) {
             fail(cacheKey, "Not a valid PNG: " + label); return;
         }
+        final byte[] finalBytes = bytes;
         MinecraftClient.getInstance().execute(() -> {
             try {
-                NativeImage img = NativeImage.read(new ByteArrayInputStream(bytes));
+                NativeImage img = NativeImage.read(new ByteArrayInputStream(finalBytes));
                 NativeImageBackedTexture tex = new NativeImageBackedTexture(img);
+                // Use a STABLE identifier so it survives texture manager reloads
                 Identifier id = Identifier.of("xbettercapes",
-                        "skin_" + COUNTER.incrementAndGet());
+                        "skin_persistent_" + COUNTER.incrementAndGet());
                 MinecraftClient.getInstance().getTextureManager().registerTexture(id, tex);
                 CACHE.put(cacheKey, id);
-                statusMsg = "Skin loaded! Rejoin to see.";
-                System.out.println("[xBetterCapes] Skin loaded: " + id);
+                statusMsg = "Skin loaded!";
+                System.out.println("[xBetterCapes] Skin loaded OK: " + id);
             } catch (Exception e) {
                 fail(cacheKey, "Register failed: " + e.getMessage());
             } finally {
@@ -159,21 +153,30 @@ public class SkinFetcher {
         });
     }
 
-    private static void fail(String cacheKey, String msg) {
+    private static void fail(String key, String msg) {
         System.err.println("[xBetterCapes] " + msg);
         statusMsg = msg;
-        PENDING.remove(cacheKey);
+        PENDING.remove(key);
+    }
+
+    /** Only call this when user explicitly resets or changes skin */
+    public static void clearCache() {
+        MinecraftClient mc = MinecraftClient.getInstance();
+        CACHE.forEach((k, id) -> {
+            try { mc.getTextureManager().destroyTexture(id); } catch (Exception ignored) {}
+        });
+        CACHE.clear();
+        PENDING.clear();
+        statusMsg = "";
     }
 
     // ── HTTP helpers ──────────────────────────────────────────────────────────
-
     private static String httpGet(String urlStr) throws Exception {
         HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
         conn.setRequestProperty("User-Agent", "xBetterCapes/1.0");
         conn.setConnectTimeout(8000);
         conn.setReadTimeout(10000);
-        int code = conn.getResponseCode();
-        if (code != 200) { conn.disconnect(); return null; }
+        if (conn.getResponseCode() != 200) { conn.disconnect(); return null; }
         try (InputStream is = conn.getInputStream()) {
             return new String(is.readAllBytes());
         } finally { conn.disconnect(); }
@@ -209,13 +212,5 @@ public class SkinFetcher {
             conn.disconnect(); break;
         }
         return null;
-    }
-
-    public static void clearCache() {
-        MinecraftClient mc = MinecraftClient.getInstance();
-        CACHE.forEach((k, id) -> mc.getTextureManager().destroyTexture(id));
-        CACHE.clear();
-        PENDING.clear();
-        statusMsg = "";
     }
 }
