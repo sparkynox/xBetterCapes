@@ -41,6 +41,26 @@ public class XSkinCommand {
                                 return 1;
                             })))
 
+                    // /xskin check — debug: shows current skin state
+                    .then(ClientCommandManager.literal("check")
+                        .executes(ctx -> {
+                            String cfg = SkinConfig.selectedSkin;
+                            msg("Config: " + cfg);
+                            msg("Model: " + SkinConfig.skinModel);
+                            if (!cfg.equals("NONE")) {
+                                net.minecraft.util.Identifier tex =
+                                    dev.sparkynox.xbettercapes.skin.SkinFetcher.getSkin(cfg);
+                                msg("Texture in cache: " + (tex != null ? tex.toString() : "NULL - still loading"));
+                                if (ctx.getSource().getClient().player != null) {
+                                    net.minecraft.client.util.SkinTextures st =
+                                        ctx.getSource().getClient().player.getSkinTextures();
+                                    msg("Active skin tex: " + st.texture());
+                                    msg("Active model: " + st.model());
+                                }
+                            }
+                            return 1;
+                        }))
+
                     // /xskin <playerName or URL>
                     .then(ClientCommandManager.argument("target",
                             StringArgumentType.greedyString())
