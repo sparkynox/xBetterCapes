@@ -24,7 +24,10 @@ public class XBetterCapesClient implements ClientModInitializer {
         CapeConfig.load();
         SkinConfig.load();
 
-        // Discover animated capes from config/xbettercapes/animations/
+        // Load built-in animated capes immediately (uses ClassLoader, no timing issue)
+        CapeRegistry.loadBuiltinAnimations();
+
+        // Discover user animated capes from config/xbettercapes/animations/
         AnimatedCape.discoverAndLoad();
         CapeRegistry.addAnimatedCapes();
 
