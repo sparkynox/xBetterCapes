@@ -1,5 +1,7 @@
 package dev.sparkynox.xbettercapes.cape;
 
+import dev.sparkynox.xbettercapes.cape.AnimatedCape;
+import dev.sparkynox.xbettercapes.cape.BuiltinAnimatedCape;
 import net.minecraft.util.Identifier;
 import java.util.ArrayList;
 import java.util.List;
@@ -57,6 +59,10 @@ public class CapeRegistry {
         register("cape39", "Cape 39", "xbettercapes:textures/capes/39.png");
         register("cape40", "Cape 40", "xbettercapes:textures/capes/40.png");
         register("cape41", "Cape 41", "xbettercapes:textures/capes/41.png");
+
+        // ── Built-in Animated Capes ─────────────────────────────────────────
+        BUILTIN_CAPES.add(new CapeEntry(CapeEntry.Type.BUILTIN,
+                "anim_builtin_pixellab", "PixelLab (Anim)", null));
     }
 
     private static void register(String id, String name, String path) {
@@ -65,6 +71,12 @@ public class CapeRegistry {
 
     public static List<CapeEntry> getBuiltinCapes() {
         return BUILTIN_CAPES;
+    }
+
+    /** Call once after ResourceManager is ready (i.e. after joining world) */
+    public static void loadBuiltinAnimations() {
+        BuiltinAnimatedCape.register(
+                "anim_builtin_pixellab", "PixelLab", "pixellab", 75);
     }
 
     /**
@@ -83,6 +95,19 @@ public class CapeRegistry {
         customLocalEntry = updated;
         // Pre-cache the identifier so getTexture() returns it immediately
         // (texture is already registered in TextureManager by caller)
+    }
+
+    /**
+     * Called after AnimatedCape.discoverAndLoad() to inject animated entries into the list.
+     * Animated capes appear after built-in capes in the GUI.
+     */
+    public static void addAnimatedCapes() {
+        for (CapeEntry e : AnimatedCape.getAnimatedEntries()) {
+            // Avoid duplicates on reload
+            if (BUILTIN_CAPES.stream().noneMatch(c -> c.id.equals(e.id))) {
+                BUILTIN_CAPES.add(e);
+            }
+        }
     }
 
     public static CapeEntry fromUrl(String url) {
