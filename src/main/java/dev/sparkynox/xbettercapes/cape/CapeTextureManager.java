@@ -7,6 +7,8 @@ import net.minecraft.util.Identifier;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import dev.sparkynox.xbettercapes.cape.AnimatedCape;
+import dev.sparkynox.xbettercapes.cape.BuiltinAnimatedCape;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -30,8 +32,20 @@ public class CapeTextureManager {
     private static final AtomicInteger           COUNTER = new AtomicInteger(0);
 
     public static Identifier getTexture(CapeEntry entry) {
-        if (entry == null || entry.resourcePath == null) return null;
+        if (entry == null) return null;
         String key = entry.toConfigString();
+
+        // Built-in animated cape (jar-embedded frames)
+        if (BuiltinAnimatedCape.isBuiltinAnim(entry.id)) {
+            return BuiltinAnimatedCape.getCurrentFrame(entry.id);
+        }
+
+        // External animated cape (user folder)
+        if (AnimatedCape.isAnimated(entry.id)) {
+            return AnimatedCape.getCurrentFrame(entry.id);
+        }
+
+        if (entry.resourcePath == null) return null;
 
         Identifier cached = CACHE.get(key);
         if (cached != null) return cached;
