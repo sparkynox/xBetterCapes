@@ -8,6 +8,7 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.ButtonWidget;
+import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
 
@@ -23,14 +24,15 @@ public class CapeSelectScreen extends Screen {
     private static final int COLS        = 4;
     private static final int SCROLLBAR_W = 6;
 
-    // Cape front-face in 64x32 texture: pixel 1,1 size 10x16
-    // We render it with drawGuiTexture at 2x scale → 20x32 preview
     private static final int SRC_X=1, SRC_Y=1, SRC_W=10, SRC_H=16;
     private static final int TEX_W=64, TEX_H=32;
     private static final int PREV_W=20, PREV_H=32;
 
     private List<CapeEntry> capes;
     private String statusMsg = "";
+
+    // URL field for Load Custom
+    private TextFieldWidget urlField;
 
     private int scrollOffset = 0;
     private boolean draggingScroll = false;
@@ -49,26 +51,55 @@ public class CapeSelectScreen extends Screen {
     protected void init() {
         capes = CapeRegistry.getBuiltinCapes();
         recalcLayout();
-        int cx = this.width / 2;
-        // Two buttons side by side at bottom
-        this.addDrawableChild(ButtonWidget.builder(
-                Text.literal("Load Custom"), btn -> openFilePicker())
-                .dimensions(cx - 100, bottomBarY + 6, 90, 18).build());
 
+        int cx = this.width / 2;
+
+        // URL field for Load Custom
+        urlField = new TextFieldWidget(this.textRenderer,
+                cx - 100, bottomBarY + 4, 160, 16,
+                Text.literal("URL"));
+        urlField.setPlaceholder(Text.literal("https://... paste cape URL"));
+        urlField.setMaxLength(512);
+        this.addDrawableChild(urlField);
+
+        // Load URL button
+        this.addDrawableChild(ButtonWidget.builder(Text.literal("Load"), btn -> loadUrl())
+                .dimensions(cx + 64, bottomBarY + 4, 40, 16).build());
+
+        // File button
+        this.addDrawableChild(ButtonWidget.builder(
+                Text.literal("File"), btn -> openFilePicker())
+                .dimensions(cx - 145, bottomBarY + 4, 40, 16).build());
+
+        // Skin button
         this.addDrawableChild(ButtonWidget.builder(
                 Text.literal("Skin >"), btn ->
                         this.client.setScreen(new SkinScreen(this)))
-                .dimensions(cx - 4, bottomBarY + 6, 50, 18).build());
+                .dimensions(cx + 108, bottomBarY + 4, 46, 16).build());
 
+        // Close
         this.addDrawableChild(ButtonWidget.builder(
                 Text.literal("Close"), btn -> close())
-                .dimensions(cx + 54, bottomBarY + 6, 46, 18).build());
+                .dimensions(cx - 22, bottomBarY + 24, 44, 14).build());
+    }
+
+    private void loadUrl() {
+        String url = urlField.getText().trim();
+        if (url.isEmpty()) { statusMsg = "Paste a URL first!"; return; }
+        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+            statusMsg = "URL must start with https://"; return;
+        }
+        CapeEntry entry = CapeRegistry.fromUrl(url);
+        CapeConfig.selectedCape = entry.toConfigString();
+        CapeConfig.save();
+        CapeTextureManager.prefetch(entry);
+        statusMsg = "Loading cape...";
     }
 
     private void recalcLayout() {
         int rows      = (int) Math.ceil(capes.size() / (double) COLS);
         int contentGW = COLS * (CARD_W + CARD_GAP) - CARD_GAP;
-        bottomBarY    = this.height - 32;
+        bottomBarY    = this.height - 46;
         gridX         = (this.width - contentGW) / 2;
         gridY         = 32;
         gridW         = contentGW;
@@ -78,11 +109,8 @@ public class CapeSelectScreen extends Screen {
         scrollbarH    = gridH;
     }
 
-    // ── File picker — Android/Pojav compatible ────────────────────────────────
+    // ── File picker ───────────────────────────────────────────────────────────
     private void openFilePicker() {
-        // On Android/Pojav, AWT is unavailable.
-        // Instead, open a text-input dialog so user can type the file path.
-        // The path on Pojav is usually /sdcard/... or /storage/emulated/0/...
         MinecraftClient.getInstance().setScreen(new FilePathInputScreen(this));
     }
 
@@ -159,8 +187,8 @@ public class CapeSelectScreen extends Screen {
         }
         ctx.disableScissor();
 
-        ctx.fill(gridX, gridY,         gridX+gridW, gridY+8,      0xBB060609);
-        ctx.fill(gridX, gridY+gridH-8, gridX+gridW, gridY+gridH,  0xBB060609);
+        ctx.fill(gridX, gridY,         gridX+gridW, gridY+8,     0xBB060609);
+        ctx.fill(gridX, gridY+gridH-8, gridX+gridW, gridY+gridH, 0xBB060609);
 
         if (maxScroll()>0) {
             ctx.fill(scrollbarX, gridY, scrollbarX+SCROLLBAR_W, gridY+scrollbarH, 0xFF0E0E18);
@@ -170,10 +198,18 @@ public class CapeSelectScreen extends Screen {
         }
 
         ctx.fill(px+2, bottomBarY-2, px+pw-2, bottomBarY-1, 0xFF183040);
+
+        // URL label
+        ctx.drawTextWithShadow(textRenderer, Text.literal("URL:"),
+                this.width/2 - 100, bottomBarY - 8, 0x446677);
+
         if (!statusMsg.isEmpty()) {
-            boolean err=statusMsg.startsWith("Not")||statusMsg.startsWith("Failed")||statusMsg.startsWith("Could")||statusMsg.startsWith("File not");
+            boolean err = statusMsg.startsWith("Not")||statusMsg.startsWith("Failed")||
+                         statusMsg.startsWith("Could")||statusMsg.startsWith("File not")||
+                         statusMsg.startsWith("URL must")||statusMsg.startsWith("Paste");
             ctx.drawCenteredTextWithShadow(textRenderer,
-                    Text.literal(statusMsg), this.width/2, bottomBarY-10, err?0xFF4444:0x00CC88);
+                    Text.literal(statusMsg), this.width/2, bottomBarY-8,
+                    err?0xFF4444:0x00CC88);
         }
 
         super.render(ctx, mouseX, mouseY, delta);
@@ -199,14 +235,19 @@ public class CapeSelectScreen extends Screen {
                 selected?0xFF0099BB:(hovered?0xFF223344:0xFF141424));
         if (selected) ctx.fill(x+1, y+1, x+CARD_W-1, y+2, 0xFF00BBDD);
 
-        // Center preview
         int imgX = x + (CARD_W - PREV_W) / 2;
         int imgY = y + 6;
 
-        Identifier tex = CapeTextureManager.getTexture(entry);
+        // Only render texture if this cape is selected OR hovered — avoids background render lag
+        Identifier tex = null;
+        if (selected || hovered) {
+            tex = CapeTextureManager.getTexture(entry);
+        } else {
+            // For non-selected/non-hovered: use cached only, no new fetch
+            tex = CapeTextureManager.getCachedOnly(entry);
+        }
 
         if (tex != null && entry.resourcePath != null) {
-            // drawGuiTexture: texW, texH, srcX, srcY, dstX, dstY, dstW, dstH
             CapePreviewHelper.drawRegion(ctx, tex,
                     imgX, imgY, PREV_W, PREV_H,
                     SRC_X, SRC_Y, TEX_W, TEX_H);
@@ -233,7 +274,6 @@ public class CapeSelectScreen extends Screen {
                 Text.literal("v"), x+CARD_W-6, y+4, 0x00EE88);
     }
 
-    // ── Input ─────────────────────────────────────────────────────────────────
     @Override
     public boolean mouseScrolled(double mx,double my,double hA,double vA) {
         scrollOffset-=(int)(vA*(CARD_H+CARD_GAP)); clampScroll(); return true;
