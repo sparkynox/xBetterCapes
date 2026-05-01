@@ -182,6 +182,19 @@ public class CapeTextureManager {
     }
 
     /** Directly insert a pre-loaded texture into cache (used for local file capes) */
+    /**
+     * Returns cached texture ONLY — does NOT trigger animated frame update.
+     * Used for non-selected, non-hovered cards to prevent background rendering lag.
+     */
+    public static Identifier getCachedOnly(CapeEntry entry) {
+        if (entry == null || entry.resourcePath == null) return null;
+        String key = entry.toConfigString();
+        // For animated capes — only return frame if already in cache, no tick
+        if (BuiltinAnimatedCape.isBuiltinAnim(entry.id)) return null; // don't animate in bg
+        if (AnimatedCape.isAnimated(entry.id)) return null; // don't animate in bg
+        return CACHE.get(key); // static capes: return if cached, else null
+    }
+
     public static void putCache(String key, Identifier id) {
         CACHE.put(key, id);
     }
