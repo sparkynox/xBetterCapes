@@ -34,15 +34,15 @@ jobs:
         run: chmod +x gradlew
 
       - name: Build mod
-        run: ./gradlew build --no-daemon
+        run: ./gradlew build remapJar --no-daemon --stacktrace
 
       - name: Find all JARs
-        run: find . -name "*.jar" -not -path "./.gradle/*" -not -path "./gradle/*"
+        run: find . -name "*.jar" -not -path "./.gradle/*" -not -path "./gradle/*" | sort
 
       - name: Upload JAR artifact
         uses: actions/upload-artifact@v4
         with:
           name: xbettercapes-jar
-          path: build/libs/*-*.jar
+          path: build/libs/*.jar
           if-no-files-found: warn
           retention-days: 7
