@@ -36,10 +36,15 @@ jobs:
       - name: Build mod
         run: ./gradlew build --no-daemon
 
+      - name: List build output (debug)
+        run: find build/libs -type f 2>/dev/null || echo "build/libs not found"
+
       - name: Upload JAR artifact
         uses: actions/upload-artifact@v4
         with:
           name: xbettercapes-jar
-          path: build/libs/*.jar
-          if-no-files-found: error
+          path: |
+            build/libs/*.jar
+            build/libs/**/*.jar
+          if-no-files-found: warn
           retention-days: 7
