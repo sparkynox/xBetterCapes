@@ -3,7 +3,7 @@
   "id": "xbettercapes",
   "version": "${version}",
   "name": "xBetter Capes",
-  "description": "Use custom capes on cracked/offline accounts with a sleek GUI. Built-in capes + URL support.",
+  "description": "Custom capes & skins for cracked/offline accounts. Built-in capes, URL support, animated capes.",
   "authors": ["SparkyNox", "SPA4RKIEE_XD"],
   "contact": {
     "homepage": "https://modrinth.com/user/sparkynox"
@@ -16,8 +16,8 @@
   },
   "mixins": ["xbettercapes.mixins.json"],
   "depends": {
-    "fabricloader": ">=0.16.9",
+    "fabricloader": ">=0.18.1",
     "fabric-api": "*",
-    "minecraft": ">=1.21.4"
+    "minecraft": ">=1.21.11"
   }
 }
